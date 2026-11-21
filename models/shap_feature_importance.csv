@@ -1,0 +1,9 @@
+Feature,Mean Absolute SHAP
+num__Torque,0.1615738870719702
+num__Rotational speed,0.13747918776139298
+num__Tool wear,0.09519902927620949
+num__Air temperature,0.07326392969855351
+num__Process temperature,0.040560041562578884
+cat__Type_L,0.011983836007266956
+cat__Type_M,0.004857840344237085
+cat__Type_H,0.0026395455840834883
