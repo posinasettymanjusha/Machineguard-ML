@@ -8,3 +8,6 @@ scikit-learn==1.6.1
 shap
 pytest
 httpx
+sqlalchemy>=2.0
+psycopg[binary]>=3.2
+python-dotenv>=1.0
