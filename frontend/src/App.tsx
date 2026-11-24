@@ -74,34 +74,25 @@ const navigation = [
 const metrics = [
   {
     title: "Machines monitored",
-    value: "04",
-    note: "Illustrative inventory",
     icon: Factory,
     tone: "violet",
   },
   {
     title: "Operational",
-    value: "02",
-    note: "Sample status data",
     icon: CheckCircle2,
     tone: "green",
   },
   {
     title: "At risk",
-    value: "01",
-    note: "Sample status data",
     icon: AlertTriangle,
     tone: "amber",
   },
   {
     title: "Critical",
-    value: "01",
-    note: "Sample status data",
     icon: Zap,
     tone: "red",
   },
 ];
-
 
 /* -------------------- Shared components -------------------- */
 
@@ -1500,40 +1491,120 @@ function OverviewPage({
 }: {
   setActivePage: (page: string) => void;
 }) {
+  const [inventory, setInventory] = useState<Awaited<ReturnType<typeof getMachines>> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadInventory = async () => {
+      try {
+        const data = await getMachines();
+        if (active) {
+          setInventory(data);
+          setError(false);
+        }
+      } catch {
+        if (active) setError(true);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    loadInventory();
+    const interval = window.setInterval(loadInventory, 30000);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [refreshKey]);
+
+  const machines = inventory?.machines ?? [];
+  const getMachineStatus = (prediction: number | null, riskLevel: string | null) => {
+    if (prediction === 1) return "Critical";
+    if (prediction === 0) {
+      const level = riskLevel?.toLowerCase();
+      return ["medium", "moderate", "high"].includes(level ?? "")
+        ? "At risk"
+        : "Operational";
+    }
+    return "Unknown";
+  };
+
+  const counts = {
+    operational: machines.filter((machine) => getMachineStatus(machine.prediction, machine.risk_level) === "Operational").length,
+    atRisk: machines.filter((machine) => getMachineStatus(machine.prediction, machine.risk_level) === "At risk").length,
+    critical: machines.filter((machine) => getMachineStatus(machine.prediction, machine.risk_level) === "Critical").length,
+  };
+
+  const metricValues: Record<string, number> = {
+    "Machines monitored": inventory?.total_machines ?? 0,
+    Operational: counts.operational,
+    "At risk": counts.atRisk,
+    Critical: counts.critical,
+  };
+
+  const toneStyles: Record<string, string> = {
+    violet: "bg-violet-400/10 text-violet-300 border-violet-400/15",
+    green: "bg-emerald-400/10 text-emerald-300 border-emerald-400/15",
+    amber: "bg-amber-400/10 text-amber-300 border-amber-400/15",
+    red: "bg-rose-400/10 text-rose-300 border-rose-400/15",
+  };
+
   return (
     <div className="space-y-11">
       <PageHeading
         section="Overview"
         title="Machine overview"
         description="Monitor equipment health and review predictive maintenance insights."
+        badgeText="Live database inventory"
       />
 
       <section>
-        <div className="mb-5 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-200">Operational summary</h3>
-          <span className="text-[11px] text-slate-500">Illustrative values</span>
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-200">Operational summary</h3>
+            <p className="mt-2 text-xs text-slate-500">
+              {loading ? "Loading machine records..." : error ? "Live inventory is currently unavailable." : "Latest machine status from PostgreSQL"}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setLoading(true);
+              setRefreshKey((value) => value + 1);
+            }}
+            disabled={loading}
+            className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 transition-colors hover:bg-slate-800 disabled:opacity-50"
+          >
+            {loading ? "Refreshing..." : "Refresh data"}
+          </button>
         </div>
+
+        {error && !loading && (
+          <div role="alert" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-500/20 bg-rose-500/5 p-4">
+            <p className="text-xs text-rose-300">Could not retrieve live machine metrics. Check the backend connection and try again.</p>
+            <button onClick={() => { setLoading(true); setRefreshKey((value) => value + 1); }} className="text-xs font-medium text-slate-200 underline underline-offset-4">Retry</button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
-          {metrics.map(({ title, value, note, icon: Icon, tone }) => {
-            const styles: Record<string, string> = {
-              violet: "bg-violet-400/10 text-violet-300 border-violet-400/15",
-              green: "bg-emerald-400/10 text-emerald-300 border-emerald-400/15",
-              amber: "bg-amber-400/10 text-amber-300 border-amber-400/15",
-              red: "bg-rose-400/10 text-rose-300 border-rose-400/15",
-            };
-            return (
-              <div key={title} className="rounded-xl border border-slate-800 bg-[#111c2d] p-6 transition-colors hover:border-slate-700">
-                <div className="flex items-center justify-between">
-                  <p className="text-[13px] font-medium text-slate-400">{title}</p>
-                  <div className={`rounded-lg border p-2 ${styles[tone]}`}><Icon size={17} /></div>
-                </div>
-                <div className="mt-6 flex items-end justify-between gap-2">
-                  <p className="text-[32px] font-semibold leading-none tracking-tight text-white">{value}</p>
-                  <span className="text-[11px] text-slate-500">{note}</span>
-                </div>
+          {metrics.map(({ title, icon: Icon, tone }) => (
+            <div key={title} className="rounded-xl border border-slate-800 bg-[#111c2d] p-6 transition-colors hover:border-slate-700">
+              <div className="flex items-center justify-between">
+                <p className="text-[13px] font-medium text-slate-400">{title}</p>
+                <div className={`rounded-lg border p-2 ${toneStyles[tone]}`}><Icon size={17} /></div>
               </div>
-            );
-          })}
+              <div className="mt-6 flex items-end justify-between gap-2">
+                <p className="text-[32px] font-semibold leading-none tracking-tight text-white">
+                  {loading ? "..." : error ? "--" : String(metricValues[title] ?? 0).padStart(2, "0")}
+                </p>
+                <span className="text-[11px] text-slate-500">{loading ? "Loading" : error ? "Unavailable" : "Live database"}</span>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -1542,37 +1613,34 @@ function OverviewPage({
           <h3 className="text-sm font-semibold text-slate-200">Analytics and model status</h3>
           <p className="mt-2 text-xs text-slate-500">Model configuration and monitoring overview</p>
         </div>
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.65fr_1fr]">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <div className="rounded-xl border border-slate-800 bg-[#111c2d] p-7">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-center justify-between gap-3">
               <div>
-                <h4 className="text-sm font-semibold text-slate-100">Machine health trend</h4>
-                <p className="mt-2 text-xs text-slate-500">Illustrative values · Not live sensor telemetry</p>
+                <h4 className="text-sm font-semibold text-slate-100">Live inventory status</h4>
+                <p className="mt-2 text-xs text-slate-500">Current classification of registered machines</p>
               </div>
-              <span className="rounded-md border border-slate-700 bg-slate-800/70 px-3 py-2 text-xs text-slate-400">Today</span>
+              <Factory size={20} className="text-violet-300" />
             </div>
-            <div className="mt-8 flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-violet-400" />
-              <span className="text-xs text-slate-400">Normal index</span>
-            </div>
-            <div className="relative mt-6 h-[200px] border-b border-l border-slate-700/70">
-              <div className="absolute inset-0 flex flex-col justify-between">
-                {[100, 75, 50, 25].map((value) => (
-                  <div key={value} className="flex items-center border-t border-dashed border-slate-700/50">
-                    <span className="absolute -left-8 -translate-y-1/2 text-[10px] text-slate-600">{value}</span>
+            <div className="mt-7 space-y-5">
+              {[
+                { label: "Operational", count: counts.operational, color: "bg-emerald-400" },
+                { label: "At risk", count: counts.atRisk, color: "bg-amber-400" },
+                { label: "Critical", count: counts.critical, color: "bg-rose-400" },
+              ].map((item) => (
+                <div key={item.label}>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-xs text-slate-400">{item.label}</span>
+                    <span className="text-xs font-medium text-slate-200">{loading ? "..." : error ? "--" : item.count}</span>
                   </div>
-                ))}
-              </div>
-              <div className="absolute inset-x-3 bottom-0 flex h-full items-end justify-around gap-3">
-                {[72, 78, 74, 84, 80, 89, 85, 92, 86, 90, 94, 91].map((value, index) => (
-                  <div key={index} className="flex h-full flex-1 items-end">
-                    <div className="w-full rounded-t-sm bg-gradient-to-t from-violet-700/40 to-violet-400/80" style={{ height: `${value}%` }} />
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                    <div className={`h-full rounded-full ${item.color}`} style={{ width: !loading && !error && machines.length ? `${(item.count / machines.length) * 100}%` : "0%" }} />
                   </div>
-                ))}
-              </div>
-            </div>
-            <div className="mt-4 flex justify-between text-[10px] text-slate-500">
-              <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>Now</span>
+                </div>
+              ))}
+              {!loading && !error && machines.length === 0 && (
+                <p className="text-xs text-slate-500">No machine records are currently registered.</p>
+              )}
             </div>
           </div>
 
