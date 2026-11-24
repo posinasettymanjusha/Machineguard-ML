@@ -219,3 +219,32 @@ export function stopMonitoring(sessionId: number) {
     }
   );
 }
+// ─────────────────────────────────────────────
+// Machine inventory API
+// ─────────────────────────────────────────────
+
+export type MachineInventoryItem = {
+  machine_id: string;
+  machine_name: string;
+  machine_type: "L" | "M" | "H";
+  air_temperature: number;
+  process_temperature: number;
+  rotational_speed: number;
+  torque: number;
+  tool_wear: number;
+  failure_probability: number | null;
+  threshold: number | null;
+  prediction: number | null;
+  risk_level: string | null;
+  anomaly_prediction: number | null;
+  anomaly_status: string | null;
+  recorded_at: string;
+};
+
+export type MachineInventoryResponse = {
+  total_machines: number;
+  machines: MachineInventoryItem[];
+};
+export function getMachines() {
+  return request<MachineInventoryResponse>("/api/v1/machines");
+}

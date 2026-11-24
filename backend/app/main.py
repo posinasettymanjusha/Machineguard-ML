@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 from backend.app.routes.monitoring import router as monitoring_router
+from backend.app.routes.machines import router as machines_router
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI
@@ -46,6 +47,7 @@ app.add_middleware(
 )
 
 app.include_router(monitoring_router)
+app.include_router(machines_router)
 
 @lru_cache(maxsize=1)
 def _get_shap_explainer():

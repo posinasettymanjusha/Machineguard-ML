@@ -42,6 +42,7 @@ import {
   predictFailure,
   detectAnomaly,
   explainPrediction,
+  getMachines,
   type HealthResponse,
   type ExplanationResponse,
   type ModelInfoResponse,
@@ -101,44 +102,6 @@ const metrics = [
   },
 ];
 
-const machines = [
-  {
-    name: "CNC Milling Unit",
-    id: "MCH-001",
-    type: "L",
-    temperature: "302.4 K",
-    torque: "42.8 Nm",
-    wear: "124 min",
-    status: "Operational",
-  },
-  {
-    name: "Hydraulic Press",
-    id: "MCH-002",
-    type: "M",
-    temperature: "304.1 K",
-    torque: "61.2 Nm",
-    wear: "208 min",
-    status: "At Risk",
-  },
-  {
-    name: "Industrial Lathe",
-    id: "MCH-003",
-    type: "H",
-    temperature: "299.8 K",
-    torque: "35.6 Nm",
-    wear: "86 min",
-    status: "Operational",
-  },
-  {
-    name: "Rotary Compressor",
-    id: "MCH-004",
-    type: "L",
-    temperature: "306.2 K",
-    torque: "68.4 Nm",
-    wear: "231 min",
-    status: "Critical",
-  },
-];
 
 /* -------------------- Shared components -------------------- */
 
@@ -146,10 +109,12 @@ function PageHeading({
   section,
   title,
   description,
+  badgeText = "Development preview · Offline evaluation",
 }: {
   section: string;
   title: string;
   description: string;
+  badgeText?: string;
 }) {
   return (
     <section className="flex flex-wrap items-end justify-between gap-5">
@@ -163,7 +128,7 @@ function PageHeading({
         <p className="mt-2 text-sm text-slate-400">{description}</p>
       </div>
       <span className="rounded-lg border border-slate-700 bg-[#111c2d] px-4 py-3 text-xs text-slate-400">
-        Development preview · Offline evaluation
+        {badgeText}
       </span>
     </section>
   );
@@ -214,14 +179,75 @@ function MetricCard({
 
 /* -------------------- Machines page -------------------- */
 
+
 function MachinesPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
+  const [machines, setMachines] = useState<
+    Awaited<ReturnType<typeof getMachines>>["machines"]
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const filteredMachines = machines.filter((machine) => {
+  useEffect(() => {
+    let active = true;
+
+    async function loadMachines() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const response = await getMachines();
+
+        if (active) {
+          setMachines(response.machines);
+        }
+      } catch (err) {
+        if (active) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load machine inventory."
+          );
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadMachines();
+
+    return () => {
+      active = false;
+    };
+  }, [refreshKey]);
+
+  const getMachineStatus = (prediction: number | null, riskLevel: string | null) => {
+    if (prediction === 1) return "Critical";
+    if (prediction === 0) {
+      const level = riskLevel?.toLowerCase();
+      return level === "medium" || level === "moderate" || level === "high"
+        ? "At Risk"
+        : "Operational";
+    }
+    return "Unknown";
+  };
+
+  const enrichedMachines = machines.map((machine) => ({
+    ...machine,
+    status: getMachineStatus(
+      machine.prediction,
+      machine.risk_level
+    ),
+  }));
+
+  const filteredMachines = enrichedMachines.filter((machine) => {
     const matchesSearch =
-      machine.name.toLowerCase().includes(search.toLowerCase()) ||
-      machine.id.toLowerCase().includes(search.toLowerCase());
+      machine.machine_name.toLowerCase().includes(search.toLowerCase()) ||
+      machine.machine_id.toLowerCase().includes(search.toLowerCase());
 
     return (
       matchesSearch &&
@@ -229,14 +255,20 @@ function MachinesPage() {
     );
   });
 
-  const operational = machines.filter(
+  const operational = enrichedMachines.filter(
     (machine) => machine.status === "Operational"
   ).length;
-  const atRisk = machines.filter(
+
+  const atRisk = enrichedMachines.filter(
     (machine) => machine.status === "At Risk"
   ).length;
-  const critical = machines.filter(
+
+  const critical = enrichedMachines.filter(
     (machine) => machine.status === "Critical"
+  ).length;
+
+  const unknown = enrichedMachines.filter(
+    (machine) => machine.status === "Unknown"
   ).length;
 
   return (
@@ -244,8 +276,26 @@ function MachinesPage() {
       <PageHeading
         section="Machines"
         title="Machine monitoring"
-        description="Review equipment operating conditions and machine health status."
+        description="Live equipment inventory and machine health from the PostgreSQL database."
+        badgeText="Live database inventory"
       />
+
+      {error && (
+        <div className="flex flex-col gap-3 rounded-xl border border-rose-500/30 bg-rose-500/5 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-rose-400">
+              Unable to load machine inventory
+            </p>
+            <p className="mt-1 text-xs text-slate-400">{error}</p>
+          </div>
+          <button
+            onClick={() => setRefreshKey((value) => value + 1)}
+            className="rounded-lg border border-slate-700 px-4 py-2 text-xs text-slate-300 hover:bg-slate-800"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <section className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         {[
@@ -273,7 +323,7 @@ function MachinesPage() {
               Equipment inventory
             </h3>
             <p className="mt-2 text-xs text-slate-500">
-              Search and filter the available machine records.
+              Database records with their latest available sensor readings.
             </p>
           </div>
 
@@ -301,58 +351,93 @@ function MachinesPage() {
                 <option className="bg-[#111c2d]" value="Operational">Operational</option>
                 <option className="bg-[#111c2d]" value="At Risk">At Risk</option>
                 <option className="bg-[#111c2d]" value="Critical">Critical</option>
+                <option className="bg-[#111c2d]" value="Unknown">Unknown</option>
               </select>
             </div>
+
+            <button
+              onClick={() => setRefreshKey((value) => value + 1)}
+              disabled={loading}
+              className="rounded-lg border border-slate-700 px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+            >
+              {loading ? "Refreshing..." : "Refresh"}
+            </button>
           </div>
         </div>
 
         <div className="mt-7 overflow-x-auto">
-          <table className="w-full min-w-[850px] table-fixed border-collapse text-left">
+          <table className="w-full min-w-[1050px] table-fixed border-collapse text-left">
             <thead>
               <tr className="bg-[#0e1929] text-[11px] uppercase tracking-wide text-slate-500">
                 <th className="px-5 py-4 font-medium">Machine</th>
                 <th className="px-5 py-4 font-medium">Type</th>
-                <th className="px-5 py-4 font-medium">Air temperature</th>
+                <th className="px-5 py-4 font-medium">Air temp.</th>
+                <th className="px-5 py-4 font-medium">Process temp.</th>
+                <th className="px-5 py-4 font-medium">Speed</th>
                 <th className="px-5 py-4 font-medium">Torque</th>
                 <th className="px-5 py-4 font-medium">Tool wear</th>
+                <th className="px-5 py-4 font-medium">Failure risk</th>
                 <th className="px-5 py-4 font-medium">Status</th>
               </tr>
             </thead>
             <tbody>
-              {filteredMachines.length > 0 ? (
+              {loading ? (
+                <tr>
+                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-slate-400">
+                    Loading machine records from database...
+                  </td>
+                </tr>
+              ) : filteredMachines.length > 0 ? (
                 filteredMachines.map((machine) => (
                   <tr
-                    key={machine.id}
+                    key={machine.machine_id}
                     className="border-t border-slate-800/80 transition-colors hover:bg-slate-800/20"
                   >
                     <td className="px-5 py-5">
                       <p className="text-[13px] font-medium text-slate-200">
-                        {machine.name}
+                        {machine.machine_name}
                       </p>
                       <p className="mt-1.5 text-[11px] text-slate-500">
-                        {machine.id}
+                        {machine.machine_id}
                       </p>
                     </td>
                     <td className="px-5 py-5 text-xs text-slate-400">
-                      Type {machine.type}
+                      Type {machine.machine_type}
                     </td>
                     <td className="px-5 py-5 text-xs text-slate-300">
-                      {machine.temperature}
+                      {machine.air_temperature.toFixed(2)} °C
                     </td>
                     <td className="px-5 py-5 text-xs text-slate-300">
-                      {machine.torque}
+                      {machine.process_temperature.toFixed(2)} °C
                     </td>
                     <td className="px-5 py-5 text-xs text-slate-300">
-                      {machine.wear}
+                      {machine.rotational_speed.toLocaleString()} RPM
+                    </td>
+                    <td className="px-5 py-5 text-xs text-slate-300">
+                      {machine.torque.toFixed(2)}
+                    </td>
+                    <td className="px-5 py-5 text-xs text-slate-300">
+                      {machine.tool_wear.toFixed(2)}
+                    </td>
+                    <td className="px-5 py-5 text-xs text-slate-300">
+                      {machine.failure_probability === null
+                        ? "N/A"
+                        : `${(machine.failure_probability * 100).toFixed(1)}%`}
                     </td>
                     <td className="px-5 py-5">
-                      <StatusBadge status={machine.status} />
+                      {machine.status === "Unknown" ? (
+                        <span className="rounded-md bg-slate-700/40 px-2.5 py-1.5 text-[11px] text-slate-400">
+                          No prediction
+                        </span>
+                      ) : (
+                        <StatusBadge status={machine.status} />
+                      )}
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={6} className="px-5 py-12 text-center">
+                  <td colSpan={9} className="px-5 py-12 text-center">
                     <p className="text-sm text-slate-400">No machines found.</p>
                     <p className="mt-2 text-xs text-slate-600">
                       Try another search or status filter.
@@ -366,14 +451,15 @@ function MachinesPage() {
 
         <div className="mt-5 border-t border-slate-800 pt-4">
           <p className="text-[11px] text-slate-500">
-            Showing {filteredMachines.length} of {machines.length} machines ·
-            Demonstration data only
+            Showing {filteredMachines.length} of {machines.length} database machines
+            {unknown > 0 ? ` · ${unknown} without predictions` : ""}
           </p>
         </div>
       </section>
     </div>
   );
 }
+
 
 /* -------------------- Prediction form types -------------------- */
 
@@ -1518,40 +1604,20 @@ function OverviewPage({
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-xl border border-slate-800 bg-[#111c2d]">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 px-7 py-6">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-100">Machine inventory</h3>
-            <p className="mt-2 text-xs text-slate-500">Illustrative machine records for interface development</p>
-          </div>
-          <button onClick={() => setActivePage("Machines")} className="rounded-lg border border-slate-700 px-4 py-2.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800">
-            View machines <ChevronRight size={13} className="ml-1 inline" />
-          </button>
+      <section className="flex flex-col gap-5 rounded-xl border border-slate-800 bg-[#111c2d] p-7 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-100">Live machine inventory</h3>
+          <p className="mt-2 max-w-2xl text-xs leading-6 text-slate-500">
+            View registered equipment, the latest sensor readings stored in PostgreSQL,
+            and each machine's latest failure prediction.
+          </p>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[850px] table-fixed border-collapse text-left">
-            <thead>
-              <tr className="bg-[#0e1929] text-[11px] font-medium uppercase tracking-wide text-slate-500">
-                <th className="px-5 py-5">Machine</th><th className="px-5 py-5">Type</th><th className="px-5 py-5">Temperature</th><th className="px-5 py-5">Torque</th><th className="px-5 py-5">Tool wear</th><th className="px-5 py-5">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {machines.map((machine) => (
-                <tr key={machine.id} className="border-t border-slate-800/80 transition-colors hover:bg-slate-800/20">
-                  <td className="break-words px-5 py-5"><p className="text-[13px] font-medium text-slate-200">{machine.name}</p><p className="mt-2 text-[11px] text-slate-500">{machine.id}</p></td>
-                  <td className="px-5 py-5 text-xs text-slate-400">Type {machine.type}</td>
-                  <td className="px-5 py-5 text-xs text-slate-300">{machine.temperature}</td>
-                  <td className="px-5 py-5 text-xs text-slate-300">{machine.torque}</td>
-                  <td className="px-5 py-5 text-xs text-slate-300">{machine.wear}</td>
-                  <td className="px-5 py-5"><StatusBadge status={machine.status} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="border-t border-slate-800 px-7 py-4">
-          <p className="text-[11px] text-slate-500">Demo records only · Replace with actual API data during integration</p>
-        </div>
+        <button
+          onClick={() => setActivePage("Machines")}
+          className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-700 px-4 py-2.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800"
+        >
+          View live inventory <ChevronRight size={13} className="ml-1 inline" />
+        </button>
       </section>
     </div>
   );
